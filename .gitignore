@@ -1,0 +1,42 @@
+# Dependencies
+**/node_modules/
+**/bower_components/
+
+# Next.js build output
+.next/
+out/
+build/
+tsconfig.tsbuildinfo
+
+# Production build and serverless deploy directories
+.vercel/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Python compilation and cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.venv/
+venv/
+ENV/
+
+# Database files
+*.db
+*.sqlite3
+
+# Agent Configuration (Device specific credentials)
+agent/device_config.json
+agent/device_id.txt
+
+# OS metadata
+.DS_Store
+Thumbs.db
