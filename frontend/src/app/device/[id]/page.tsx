@@ -674,16 +674,16 @@ ${data.remediation_steps}
           <div className="font-bold text-cyber-red mb-2">CRITICAL ERROR / CONNECTION FAILURE:</div>
           <div>{error || 'Fatal: Enforce isolation breach. Failed to load details for this device ID.'}</div>
           <div className="mt-4 border-t border-rose-900/50 pt-4">
-            <span className="block mb-2 text-cyber-muted text-xs">
-              Backend API URL: <code className="bg-black/40 px-1.5 py-0.5 rounded text-white">{apiUrl}</code>
+            <span className="block mb-2 text-cyber-muted text-xs font-sans">
+              Backend API URL: <code className="bg-black/40 px-1.5 py-0.5 rounded text-white">{apiUrl}</code>. If your backend is deployed at a custom URL (e.g. Render/Railway) or tunneled via HTTPS, configure it below:
             </span>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
               <input 
                 type="text" 
                 placeholder="https://your-backend.onrender.com" 
                 defaultValue={apiUrl}
                 id="custom-backend-url-input-detail"
-                className="bg-slate-950 border border-rose-900/50 focus:border-cyber-accent text-white px-3 py-1.5 text-xs rounded outline-none w-64 font-sans"
+                className="flex-1 bg-slate-950 border border-rose-900/50 focus:border-cyber-accent text-white px-3 py-2 text-xs rounded outline-none font-sans"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     const input = e.currentTarget.value.trim()
@@ -694,29 +694,31 @@ ${data.remediation_steps}
                   }
                 }}
               />
-              <button 
-                onClick={() => {
-                  const input = (document.getElementById('custom-backend-url-input-detail') as HTMLInputElement)?.value.trim()
-                  if (input) {
-                    localStorage.setItem('peszara_api_url', input)
-                    window.location.reload()
-                  }
-                }}
-                className="bg-rose-900/40 hover:bg-rose-900/80 border border-rose-700 hover:border-rose-600 text-white px-3 py-1.5 rounded text-xs transition font-semibold"
-              >
-                Save
-              </button>
-              {typeof window !== 'undefined' && localStorage.getItem('peszara_api_url') && (
+              <div className="flex space-x-2 shrink-0">
                 <button 
                   onClick={() => {
-                    localStorage.removeItem('peszara_api_url')
-                    window.location.reload()
+                    const input = (document.getElementById('custom-backend-url-input-detail') as HTMLInputElement)?.value.trim()
+                    if (input) {
+                      localStorage.setItem('peszara_api_url', input)
+                      window.location.reload()
+                    }
                   }}
-                  className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyber-muted hover:text-white px-3 py-1.5 rounded text-xs transition font-semibold"
+                  className="bg-rose-900/55 hover:bg-rose-900/80 border border-rose-700 text-white px-4 py-2 rounded text-xs transition font-semibold font-sans"
                 >
-                  Reset
+                  Save URL
                 </button>
-              )}
+                {typeof window !== 'undefined' && localStorage.getItem('peszara_api_url') && (
+                  <button 
+                    onClick={() => {
+                      localStorage.removeItem('peszara_api_url')
+                      window.location.reload()
+                    }}
+                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyber-muted hover:text-white px-4 py-2 rounded text-xs transition font-semibold font-sans"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
