@@ -21,18 +21,30 @@ interface Device {
   dashboard_token?: string
 }
 
+const getApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('peszara_api_url')
+    if (saved) return saved
+  }
+  return process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+}
+
 export default function Dashboard() {
   const router = useRouter()
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [apiUrl, setApiUrl] = useState('http://127.0.0.1:8000')
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+  useEffect(() => {
+    setApiUrl(getApiUrl())
+  }, [])
 
   const fetchDevices = async () => {
     try {
       setLoading(true)
-      const res = await fetch(`${API_URL}/api/v1/devices`, {
+      const currentApiUrl = getApiUrl()
+      const res = await fetch(`${currentApiUrl}/api/v1/devices`, {
         headers: {
           'Bypass-Tunnel-Reminder': 'true'
         }
@@ -85,6 +97,24 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center space-x-3">
+          <button 
+            onClick={() => {
+              const currentVal = localStorage.getItem('peszara_api_url') || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+              const newUrl = prompt('Enter your XDR Backend API URL:', currentVal)
+              if (newUrl !== null) {
+                const trimmed = newUrl.trim()
+                if (trimmed) {
+                  localStorage.setItem('peszara_api_url', trimmed)
+                } else {
+                  localStorage.removeItem('peszara_api_url')
+                }
+                window.location.reload()
+              }
+            }}
+            className="flex items-center space-x-2 bg-cyber-card border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent transition px-4 py-2 rounded-md font-mono text-sm"
+          >
+            <span>CONFIG API</span>
+          </button>
           <button 
             onClick={fetchDevices}
             className="flex items-center space-x-2 bg-cyber-card border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent transition px-4 py-2 rounded-md font-mono text-sm"
@@ -143,7 +173,55 @@ export default function Dashboard() {
       {/* Device grid section */}
       {error && (
         <div className="bg-rose-950/30 border border-rose-800 text-rose-300 p-4 rounded-lg mb-8 font-mono text-sm">
-          CRITICAL ERROR: Failed to communicate with XDR Backend. Make sure backend is running at {API_URL}.
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="flex-1">
+              <span className="font-bold text-cyber-red">CRITICAL ERROR:</span> Failed to communicate with XDR Backend at <code className="bg-black/40 px-1.5 py-0.5 rounded text-white text-xs">{apiUrl}</code>.
+              <p className="text-xs text-cyber-muted mt-1.5">
+                Make sure your backend is running. If it is deployed at a custom URL (e.g. Render/Railway) or tunneled via HTTPS, configure it below:
+              </p>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              <input 
+                type="text" 
+                placeholder="https://your-backend.onrender.com" 
+                defaultValue={apiUrl}
+                id="custom-backend-url-input"
+                className="bg-slate-950 border border-[#3A1E29] focus:border-cyber-accent text-white px-3 py-1.5 text-xs rounded outline-none w-64 font-sans"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const input = e.currentTarget.value.trim()
+                    if (input) {
+                      localStorage.setItem('peszara_api_url', input)
+                      window.location.reload()
+                    }
+                  }
+                }}
+              />
+              <button 
+                onClick={() => {
+                  const input = (document.getElementById('custom-backend-url-input') as HTMLInputElement)?.value.trim()
+                  if (input) {
+                    localStorage.setItem('peszara_api_url', input)
+                    window.location.reload()
+                  }
+                }}
+                className="bg-rose-900/40 hover:bg-rose-900/80 border border-rose-700 hover:border-rose-600 text-white px-3 py-1.5 rounded text-xs transition font-semibold"
+              >
+                Save
+              </button>
+              {typeof window !== 'undefined' && localStorage.getItem('peszara_api_url') && (
+                <button 
+                  onClick={() => {
+                    localStorage.removeItem('peszara_api_url')
+                    window.location.reload()
+                  }}
+                  className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyber-muted hover:text-white px-3 py-1.5 rounded text-xs transition font-semibold"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

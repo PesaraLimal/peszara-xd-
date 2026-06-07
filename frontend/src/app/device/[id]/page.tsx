@@ -82,10 +82,23 @@ interface AIResponse {
   risk_score_explanation: string
 }
 
+const getApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('peszara_api_url')
+    if (saved) return saved
+  }
+  return process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+}
+
 export default function DeviceDashboard({ params }: { params: { id: string } }) {
   const router = useRouter()
   const deviceId = params.id
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+  const API_URL = getApiUrl()
+  const [apiUrl, setApiUrl] = useState('http://127.0.0.1:8000')
+
+  useEffect(() => {
+    setApiUrl(getApiUrl())
+  }, [])
 
   const [activeTab, setActiveTab] = useState<'alerts' | 'processes' | 'network' | 'timeline' | 'audits'>('alerts')
   const [device, setDevice] = useState<Device | null>(null)
@@ -657,8 +670,55 @@ ${data.remediation_steps}
   if (error || !device) {
     return (
       <div className="flex-1 p-8 max-w-4xl mx-auto w-full text-center">
-        <div className="bg-rose-950/20 border border-rose-800 p-6 rounded-lg text-rose-300 mb-6 font-mono text-sm">
-          {error || 'Fatal: Enforce isolation breach. Failed to load details for this device ID.'}
+        <div className="bg-rose-950/20 border border-rose-800 p-6 rounded-lg text-rose-300 mb-6 font-mono text-sm text-left">
+          <div className="font-bold text-cyber-red mb-2">CRITICAL ERROR / CONNECTION FAILURE:</div>
+          <div>{error || 'Fatal: Enforce isolation breach. Failed to load details for this device ID.'}</div>
+          <div className="mt-4 border-t border-rose-900/50 pt-4">
+            <span className="block mb-2 text-cyber-muted text-xs">
+              Backend API URL: <code className="bg-black/40 px-1.5 py-0.5 rounded text-white">{apiUrl}</code>
+            </span>
+            <div className="flex items-center space-x-2">
+              <input 
+                type="text" 
+                placeholder="https://your-backend.onrender.com" 
+                defaultValue={apiUrl}
+                id="custom-backend-url-input-detail"
+                className="bg-slate-950 border border-rose-900/50 focus:border-cyber-accent text-white px-3 py-1.5 text-xs rounded outline-none w-64 font-sans"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const input = e.currentTarget.value.trim()
+                    if (input) {
+                      localStorage.setItem('peszara_api_url', input)
+                      window.location.reload()
+                    }
+                  }
+                }}
+              />
+              <button 
+                onClick={() => {
+                  const input = (document.getElementById('custom-backend-url-input-detail') as HTMLInputElement)?.value.trim()
+                  if (input) {
+                    localStorage.setItem('peszara_api_url', input)
+                    window.location.reload()
+                  }
+                }}
+                className="bg-rose-900/40 hover:bg-rose-900/80 border border-rose-700 hover:border-rose-600 text-white px-3 py-1.5 rounded text-xs transition font-semibold"
+              >
+                Save
+              </button>
+              {typeof window !== 'undefined' && localStorage.getItem('peszara_api_url') && (
+                <button 
+                  onClick={() => {
+                    localStorage.removeItem('peszara_api_url')
+                    window.location.reload()
+                  }}
+                  className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyber-muted hover:text-white px-3 py-1.5 rounded text-xs transition font-semibold"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
         </div>
         {typeof window !== 'undefined' && !new URLSearchParams(window.location.search).get('token') && (
           <Link href="/" className="inline-flex items-center space-x-2 text-cyber-accent border border-cyber-accent/30 hover:bg-cyber-accent/10 px-4 py-2 rounded">
@@ -765,6 +825,25 @@ ${data.remediation_steps}
                 <span>{copied ? 'COPIED!' : 'SHARE LINK'}</span>
               </button>
             )}
+            <button 
+              onClick={() => {
+                const currentVal = localStorage.getItem('peszara_api_url') || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+                const newUrl = prompt('Enter your XDR Backend API URL:', currentVal)
+                if (newUrl !== null) {
+                  const trimmed = newUrl.trim()
+                  if (trimmed) {
+                    localStorage.setItem('peszara_api_url', trimmed)
+                  } else {
+                    localStorage.removeItem('peszara_api_url')
+                  }
+                  window.location.reload()
+                }
+              }}
+              className="flex items-center justify-center p-2.5 bg-cyber-card border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent transition rounded-lg"
+              title="Configure API URL"
+            >
+              <Terminal size={16} />
+            </button>
             <button 
               onClick={fetchData}
               className="flex items-center justify-center p-2.5 bg-cyber-card border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent transition rounded-lg"
