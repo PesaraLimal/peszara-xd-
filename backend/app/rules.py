@@ -70,7 +70,7 @@ def run_rules_engine(db: Session, device_id: str, telemetry: TelemetryIngest):
             continue
 
         # Rule 1B: Shell execution with suspicious arguments (T1059 - Command and Scripting Interpreter)
-        is_shell = any(sh in proc_name_lower for sh in ["cmd.exe", "powershell.exe", "pwsh", "bash", "sh", "zsh"])
+        is_shell = any(sh == proc_name_lower or proc_name_lower.startswith(sh + ".") for sh in ["cmd", "powershell", "pwsh", "bash", "sh", "zsh"])
         if is_shell:
             matched_args = [arg for arg in SUSPICIOUS_SHELL_ARGS if re.search(arg, cmdline_lower)]
             if matched_args:
