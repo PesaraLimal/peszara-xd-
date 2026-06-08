@@ -1,295 +1,286 @@
 import os
 import sys
 import time
+import uuid
 import socket
 import platform
 import hashlib
-import uuid
-import logging
 import requests
 import psutil
 from datetime import datetime
+import threading
 
-# Setup Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger("PeszaraAgent")
-
-import json
-
-BACKEND_URL = os.getenv("PESZARA_BACKEND_URL", "http://localhost:8000")
-SUBMIT_ENDPOINT = f"{BACKEND_URL}/api/v1/telemetry/submit"
+# Config
+BACKEND_URL = os.getenv("PESZARA_BACKEND_URL", "http://localhost:8000/api/telemetry")
 INTERVAL_SECONDS = 10
-REGISTRATION_KEY = os.getenv("PESZARA_REGISTRATION_KEY", "PESZARA_SECURE_REG_2026")
+WATCH_DIR = os.path.join(os.getcwd(), "watch_folder")
 
-CONFIG_FILE = "device_config.json"
-DEVICE_ID = None
-DEVICE_TOKEN = None
+# Create watch directory if it doesn't exist
+if not os.path.exists(WATCH_DIR):
+    os.makedirs(WATCH_DIR)
+    print(f"[*] Created file telemetry watch folder: {WATCH_DIR}")
 
-def check_enrollment():
-    global DEVICE_ID, DEVICE_TOKEN
-    
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                config = json.load(f)
-                DEVICE_ID = config.get("device_id")
-                DEVICE_TOKEN = config.get("device_token")
-                logger.info(f"Loaded config for enrolled Device ID: {DEVICE_ID}")
-                return True
-        except Exception as e:
-            logger.error(f"Failed reading configuration file: {e}")
-            
-    logger.info("Configuration file not found. Requesting secure enrollment with backend...")
-    
-    reg_key = REGISTRATION_KEY
-    if len(sys.argv) > 1:
-        for idx, arg in enumerate(sys.argv):
-            if arg == "--regkey" and idx + 1 < len(sys.argv):
-                reg_key = sys.argv[idx + 1]
-                
-    register_url = f"{BACKEND_URL}/api/v1/devices/register"
-    payload = {
-        "hostname": socket.gethostname(),
-        "os_name": platform.system(),
-        "os_version": f"{platform.release()} ({platform.version()})",
-        "ip_address": get_primary_ip(),
-        "mac_address": get_mac_address(),
-        "logged_in_user": get_logged_in_user(),
-        "registration_key": reg_key
-    }
-    
+# Global list of queued file events
+file_events_queue = []
+file_events_lock = threading.Lock()
+
+def get_device_id() -> str:
+    """
+    Generates a unique, persistent device ID based on the system's MAC address.
+    """
+    mac = uuid.getnode()
+    # Format MAC or fallback
+    mac_str = ':'.join(('%012X' % mac)[i:i+2] for i in range(0, 12, 2))
+    hasher = hashlib.sha256(mac_str.encode())
+    return f"dev_{hasher.hexdigest()[:12]}"
+
+def get_local_ip() -> str:
+    """
+    Helper to get the primary local IP address of the machine.
+    """
     try:
-        res = requests.post(register_url, json=payload, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            DEVICE_ID = data["device_id"]
-            DEVICE_TOKEN = data["device_token"]
-            
-            with open(CONFIG_FILE, "w") as f:
-                json.dump({
-                    "device_id": DEVICE_ID,
-                    "device_token": DEVICE_TOKEN
-                }, f)
-                
-            from urllib.parse import urlparse
-            parsed = urlparse(BACKEND_URL)
-            host = parsed.hostname or "localhost"
-            if "vercel.app" in host:
-                dashboard_url = f"https://{host}{data['dashboard_url']}"
-            else:
-                dashboard_url = f"http://{host}:3000{data['dashboard_url']}"
-            
-            logger.info("=" * 80)
-            logger.info("SECURE DEVICE ENROLLMENT SUCCESSFUL!")
-            logger.info(f"Device ID: {DEVICE_ID}")
-            logger.info(f"Device Access Token: {DEVICE_TOKEN[:6]}...")
-            logger.info("YOUR UNIQUE PRIVATE SOC DASHBOARD URL:")
-            logger.info(f"   {dashboard_url}   ")
-            logger.info("=" * 80)
-            return True
-        else:
-            logger.error(f"Backend enrollment rejected: {res.status_code} - {res.text}")
-            logger.error("Please verify your registration key or check backend logs.")
-            return False
-    except Exception as e:
-        logger.error(f"Failed to communicate with registration server: {e}")
-        return False
-
-
-def get_mac_address():
-    try:
-        mac = uuid.getnode()
-        return ':'.join(('%012X' % mac)[i:i+2] for i in range(0, 12, 2))
-    except Exception:
-        return "00:00:00:00:00:00"
-
-
-def get_primary_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        # doesn't even have to be reachable
-        s.connect(('8.8.8.8', 1))
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
-    except Exception:
-        ip = '127.0.0.1'
-    finally:
         s.close()
-    return ip
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
+def calculate_sha256(filepath: str) -> str:
+    """
+    Calculates SHA256 hash of a file. Returns empty string if file is unreadable.
+    """
+    if not filepath or not os.path.exists(filepath):
+        return ""
+    try:
+        # Ignore files over 20MB to prevent lag
+        if os.path.getsize(filepath) > 20 * 1024 * 1024:
+            return ""
+        
+        sha255 = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha255.update(chunk)
+        return sha255.hexdigest()
+    except Exception:
+        return ""
 
-def get_logged_in_user():
+def watch_directory_loop():
+    """
+    Simple background thread to monitor the watch_folder for modifications/creations.
+    """
+    global file_events_queue
+    print(f"[*] Monitoring directory for file activity: {WATCH_DIR}")
+    
+    # Store initial state: file -> last modified time
+    last_state = {}
+    try:
+        for f in os.listdir(WATCH_DIR):
+            path = os.path.join(WATCH_DIR, f)
+            if os.path.isfile(path):
+                last_state[path] = os.path.getmtime(path)
+    except Exception as e:
+        print(f"Error scanning watch dir: {e}")
+
+    while True:
+        try:
+            time.sleep(2)
+            current_state = {}
+            files = []
+            try:
+                files = os.listdir(WATCH_DIR)
+            except Exception:
+                continue
+
+            for f in files:
+                path = os.path.join(WATCH_DIR, f)
+                if os.path.isfile(path):
+                    try:
+                        current_state[path] = os.path.getmtime(path)
+                    except Exception:
+                        continue
+
+            with file_events_lock:
+                # Check for deletions
+                for path in list(last_state.keys()):
+                    if path not in current_state:
+                        file_events_queue.append({
+                            "action": "DELETED",
+                            "filepath": path
+                        })
+                        print(f"[File Log] DELETED: {path}")
+
+                # Check for creations and updates
+                for path, mtime in current_state.items():
+                    if path not in last_state:
+                        file_events_queue.append({
+                            "action": "CREATED",
+                            "filepath": path
+                        })
+                        print(f"[File Log] CREATED: {path}")
+                    elif mtime > last_state[path]:
+                        file_events_queue.append({
+                            "action": "MODIFIED",
+                            "filepath": path
+                        })
+                        print(f"[File Log] MODIFIED: {path}")
+
+            last_state = current_state
+        except Exception as e:
+            print(f"Watcher loop exception: {e}")
+
+def gather_telemetry() -> dict:
+    """
+    Collects system, process, network, and file events telemetry.
+    """
+    global file_events_queue
+    
+    # System Info
+    device_id = get_device_id()
+    hostname = socket.gethostname()
+    os_name = platform.system()
+    os_version = platform.release()
+    ip_address = get_local_ip()
+    mac = uuid.getnode()
+    mac_str = ':'.join(('%012X' % mac)[i:i+2] for i in range(0, 12, 2))
+    
+    logged_in_user = ""
     try:
         users = psutil.users()
         if users:
-            return users[0].name
+            logged_in_user = users[0].name
+        else:
+            logged_in_user = os.getlogin()
     except Exception:
-        pass
+        # Fallback for Windows/headless setups
+        logged_in_user = os.environ.get("USERNAME") or os.environ.get("USER") or "Unknown"
+
+    cpu_usage = psutil.cpu_percent()
+    memory_usage = psutil.virtual_memory().percent
+
+    # Gather Processes
+    processes = []
+    # Cache to map pid -> name for socket lookup
+    pid_name_map = {}
     
-    # Fallbacks
-    for var in ['USER', 'USERNAME', 'LOGNAME']:
-        val = os.getenv(var)
-        if val:
-            return val
-    return "Unknown"
-
-
-def calculate_sha256(filepath):
-    """Calculates the SHA256 hash of a file if readable."""
-    if not filepath or not os.path.exists(filepath):
-        return None
-    try:
-        # Don't hash huge files to avoid agent resource spikes
-        if os.path.getsize(filepath) > 50 * 1024 * 1024:  # 50 MB
-            return None
-            
-        sha256_hash = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
-    except (PermissionError, FileNotFoundError, OSError):
-        return None
-
-
-def collect_telemetry():
-    logger.info("Collecting telemetry data...")
-    
-    # System Info
-    hostname = socket.gethostname()
-    os_name = platform.system()
-    os_version = f"{platform.release()} ({platform.version()})"
-    ip_addr = get_primary_ip()
-    mac_addr = get_mac_address()
-    cpu_use = psutil.cpu_percent()
-    ram_use = psutil.virtual_memory().percent
-    current_user = get_logged_in_user()
-    
-    # Processes
-    processes_payload = []
-    # Fetch CPU percentages properly (first call might be zero, but continuous running is accurate)
-    for p in psutil.process_iter(attrs=['pid', 'ppid', 'name', 'exe', 'cmdline', 'username']):
+    for proc in psutil.process_iter(['pid', 'ppid', 'name', 'exe', 'username']):
         try:
-            info = p.info
+            info = proc.info
             pid = info['pid']
             ppid = info['ppid']
-            name = info['name'] or ""
-            exe_path = info['exe'] or ""
+            name = info['name'] or "unknown"
+            exe = info['exe'] or ""
+            username = info['username'] or ""
             
-            # Reconstruct command line string
-            cmdline_list = info['cmdline']
-            command_line = " ".join(cmdline_list) if cmdline_list else ""
-            
-            username = info['username'] or "SYSTEM"
-            
-            # Hash executable (only if it has an executable path)
-            sha256_hash = calculate_sha256(exe_path) if exe_path else None
-            
-            # CPU and Memory measurements
+            # Map name for socket check
+            pid_name_map[pid] = name
+
+            # Only collect cmdline if needed, try/catch since cmdline might change or fail
+            cmdline = ""
             try:
-                cpu_p = p.cpu_percent(interval=None)
-                mem_p = p.memory_percent()
+                cmdline = " ".join(proc.cmdline())
             except Exception:
-                cpu_p = 0.0
-                mem_p = 0.0
-                
-            processes_payload.append({
+                pass
+
+            # Calculate SHA256 of the binary (optional, only if path exists and we have rights)
+            sha256_hash = ""
+            if exe and os.path.exists(exe):
+                # Calculate hash for common shell, or process binaries
+                if any(x in name.lower() for x in ["powershell", "cmd", "bash", "mimikatz", "nc", "python"]):
+                    sha256_hash = calculate_sha256(exe)
+
+            processes.append({
                 "pid": pid,
                 "ppid": ppid,
                 "name": name,
-                "exe_path": exe_path,
-                "command_line": command_line,
+                "exe": exe,
+                "cmdline": cmdline,
                 "username": username,
-                "sha256_hash": sha256_hash,
-                "cpu_percent": float(cpu_p),
-                "memory_percent": float(mem_p)
+                "sha256": sha256_hash
             })
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+        except Exception as e:
+            print(f"Error reading process info: {e}")
 
-    # Network Connections
-    connections_payload = []
+    # Gather Connections (Sockets)
+    connections = []
     try:
-        connections = psutil.net_connections(kind='inet')
-        for conn in connections:
-            # Only report listening or established external connections
-            if conn.status not in ['LISTEN', 'ESTABLISHED']:
-                continue
+        net_conns = psutil.net_connections(kind='inet')
+        for conn in net_conns:
+            # Only keep active connections (ESTABLISHED, LISTEN, etc.)
+            if conn.status in ["ESTABLISHED", "LISTEN"]:
+                laddr = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else ""
+                raddr = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else ""
                 
-            local_ip, local_port = conn.laddr if conn.laddr else ("0.0.0.0", 0)
-            remote_ip, remote_port = conn.raddr if conn.raddr else ("0.0.0.0", 0)
-            
-            protocol = "TCP" if conn.type == socket.SOCK_STREAM else "UDP"
-            
-            connections_payload.append({
-                "pid": conn.pid,
-                "protocol": protocol,
-                "local_address": local_ip,
-                "local_port": local_port,
-                "remote_address": remote_ip,
-                "remote_port": remote_port,
-                "state": conn.status
-            })
+                connections.append({
+                    "pid": conn.pid,
+                    "process_name": pid_name_map.get(conn.pid, "unknown") if conn.pid else "system",
+                    "family": "IPv4" if conn.family == socket.AF_INET else "IPv6",
+                    "type": "TCP" if conn.type == socket.SOCK_STREAM else "UDP",
+                    "laddr": laddr,
+                    "raddr": raddr,
+                    "status": conn.status
+                })
     except Exception as e:
-        logger.error(f"Error collecting net connections: {e}")
+        print(f"Error gathering connections: {e}")
 
-    payload = {
-        "device_id": DEVICE_ID,
+    # Pop file events from queue
+    with file_events_lock:
+        file_events = list(file_events_queue)
+        file_events_queue.clear()
+
+    return {
+        "device_id": device_id,
         "hostname": hostname,
         "os_name": os_name,
         "os_version": os_version,
-        "ip_address": ip_addr,
-        "mac_address": mac_addr,
-        "cpu_usage": float(cpu_use),
-        "ram_usage": float(ram_use),
-        "logged_in_user": current_user,
-        "processes": processes_payload,
-        "network_connections": connections_payload
+        "ip_address": ip_address,
+        "mac_address": mac_str,
+        "logged_in_user": logged_in_user,
+        "cpu_usage": cpu_usage,
+        "memory_usage": memory_usage,
+        "processes": processes,
+        "connections": connections,
+        "file_events": file_events
     }
-    
-    return payload
-
 
 def main():
-    logger.info("PESZARA XDR Telemetry Agent started.")
-    logger.info(f"Targeting backend endpoint: {SUBMIT_ENDPOINT}")
-    
-    while not check_enrollment():
-        logger.error("Enrollment failed. Retrying in 10 seconds...")
-        time.sleep(10)
-        
+    print(f"=================================================")
+    print(f"       PESZARA XDR ENDPOINT AGENT STARTED        ")
+    print(f"=================================================")
+    print(f"[*] Device ID:  {get_device_id()}")
+    print(f"[*] Hostname:   {socket.gethostname()}")
+    print(f"[*] Local IP:   {get_local_ip()}")
+    print(f"[*] Target URL: {BACKEND_URL}")
+    print(f"=================================================")
+
+    # Start watcher thread
+    watcher_thread = threading.Thread(target=watch_directory_loop, daemon=True)
+    watcher_thread.start()
+
     while True:
         try:
-            payload = collect_telemetry()
-            logger.info(f"Submitting telemetry packet to backend. Processes: {len(payload['processes'])}, Connections: {len(payload['network_connections'])}")
+            print(f"[*] Gathering host telemetry...")
+            payload = gather_telemetry()
             
-            headers = {
-                "X-Device-Id": DEVICE_ID,
-                "X-Device-Token": DEVICE_TOKEN
-            }
-            
-            response = requests.post(SUBMIT_ENDPOINT, json=payload, headers=headers, timeout=8)
+            print(f"[*] Sending telemetry ({len(payload['processes'])} processes, {len(payload['connections'])} sockets)...")
+            response = requests.post(BACKEND_URL, json=payload, timeout=8)
             if response.status_code == 200:
-                logger.info("Successfully uploaded telemetry packet.")
+                print(f"[+] Ingest response: {response.json()}")
             else:
-                logger.warning(f"Backend rejected telemetry: {response.status_code} - {response.text}")
-        except requests.exceptions.RequestException as re:
-            logger.error(f"Network error reporting to backend: {re}. Will retry.")
+                print(f"[!] Server returned error status: {response.status_code}")
+        except requests.exceptions.ConnectionError:
+            print(f"[!] Connection failed! PESZARA XDR Backend down at {BACKEND_URL}?")
         except Exception as e:
-            logger.error(f"Unexpected error in agent loop: {e}")
-            
-        logger.info(f"Sleeping for {INTERVAL_SECONDS} seconds...")
-        time.sleep(INTERVAL_SECONDS)
+            print(f"[!] Telemetry shipping error: {e}")
 
+        time.sleep(INTERVAL_SECONDS)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Agent execution terminated by user.")
+        print("\n[-] Agent stopped by user.")
         sys.exit(0)

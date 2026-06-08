@@ -1,128 +1,82 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.auth import check_device_access
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import datetime
-from app.database import get_db
-from app.models import Device, Alert, Process, NetworkConnection
-from app.schemas import AlertOut, TimelineEvent
-from app.detection.engine import calculate_risk_score
+from typing import List
+from ..database import get_db
+from ..models import Device, Alert, Process, NetworkConnection, FileEvent, Investigation
+from ..schemas import AlertResponse, AlertUpdate, ProcessResponse, NetworkConnectionResponse, FileEventResponse, InvestigationResponse
+from ..ai_copilot import analyze_incident_with_ai
+from ..rules import recalculate_device_risk
 
-router = APIRouter(prefix="/api/v1/devices", tags=["Alerts & Timeline"])
+router = APIRouter(prefix="/api")
 
-@router.get("/{device_id}/alerts", response_model=List[AlertOut], dependencies=[Depends(check_device_access)])
-def get_device_alerts(device_id: str, resolved: Optional[bool] = None, db: Session = Depends(get_db)):
-    """
-    Returns alerts list for a specific device. Filters by resolved status if specified.
-    """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
+@router.get("/device/{device_id}/alerts", response_model=List[AlertResponse])
+def get_device_alerts(device_id: str, db: Session = Depends(get_db)):
+    # Verify device exists
+    device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found.")
-        
-    query = db.query(Alert).filter(Alert.device_id == device_id)
-    if resolved is not None:
-        query = query.filter(Alert.resolved == resolved)
-        
-    return query.order_by(Alert.timestamp.desc()).all()
+        raise HTTPException(status_code=404, detail="Device not found")
+    return db.query(Alert).filter(Alert.device_id == device_id).order_by(Alert.created_at.desc()).all()
 
+@router.get("/device/{device_id}/processes", response_model=List[ProcessResponse])
+def get_device_processes(device_id: str, db: Session = Depends(get_db)):
+    return db.query(Process).filter(Process.device_id == device_id).all()
 
-@router.post("/{device_id}/alerts/{alert_id}/resolve", dependencies=[Depends(check_device_access)])
-def resolve_alert(device_id: str, alert_id: int, db: Session = Depends(get_db)):
-    """
-    Marks a specific alert as resolved and re-evaluates the device risk score.
-    """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found.")
-        
-    alert = db.query(Alert).filter(Alert.id == alert_id, Alert.device_id == device_id).first()
+@router.get("/device/{device_id}/connections", response_model=List[NetworkConnectionResponse])
+def get_device_connections(device_id: str, db: Session = Depends(get_db)):
+    return db.query(NetworkConnection).filter(NetworkConnection.device_id == device_id).all()
+
+@router.get("/device/{device_id}/file-events", response_model=List[FileEventResponse])
+def get_device_file_events(device_id: str, db: Session = Depends(get_db)):
+    return db.query(FileEvent).filter(FileEvent.device_id == device_id).order_by(FileEvent.timestamp.desc()).limit(100).all()
+
+@router.put("/alert/{alert_id}", response_model=AlertResponse)
+def update_alert(alert_id: int, payload: AlertUpdate, db: Session = Depends(get_db)):
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
-        raise HTTPException(status_code=404, detail=f"Alert '{alert_id}' not found for device '{device_id}'.")
-        
-    alert.resolved = True
-    db.flush()
+        raise HTTPException(status_code=404, detail="Alert not found")
     
-    # Recalculate Risk Score
-    active_alerts = db.query(Alert).filter(Alert.device_id == device_id, Alert.resolved == False).all()
-    device.risk_score = calculate_risk_score(active_alerts)
-    if device.risk_score >= 70:
-        device.status = "critical"
-    elif device.risk_score >= 30:
-        device.status = "suspicious"
-    else:
-        device.status = "online"
-        
+    alert.status = payload.status
     db.commit()
-    return {"status": "success", "risk_score": device.risk_score}
+    db.refresh(alert)
+    
+    # Update host risk based on resolution
+    recalculate_device_risk(db, alert.device_id)
+    return alert
 
-
-@router.post("/{device_id}/alerts/resolve-all", dependencies=[Depends(check_device_access)])
-def resolve_all_alerts(device_id: str, db: Session = Depends(get_db)):
-    """
-    Marks all unresolved alerts for a specific device as resolved and resets the device risk score.
-    """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
+@router.post("/device/{device_id}/ai-investigate", response_model=InvestigationResponse)
+def request_ai_investigate(device_id: str, db: Session = Depends(get_db)):
+    device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
-        raise HTTPException(status_code=404, detail="Device not found.")
-        
-    db.query(Alert).filter(Alert.device_id == device_id, Alert.resolved == False).update({Alert.resolved: True})
-    device.risk_score = 0
-    device.status = "online"
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    device_info = {
+        "hostname": device.hostname,
+        "os_name": device.os_name,
+        "os_version": device.os_version,
+        "ip_address": device.ip_address,
+        "logged_in_user": device.logged_in_user,
+        "risk_score": device.risk_score
+    }
+
+    # Gather active alerts (unresolved)
+    unresolved_alerts = db.query(Alert).filter(Alert.device_id == device_id, Alert.status == "UNRESOLVED").all()
+
+    # Query Copilot service (OpenAI or Local Template)
+    ai_result = analyze_incident_with_ai(device_info, unresolved_alerts)
+
+    # Save to investigation history
+    investigation = Investigation(
+        device_id=device_id,
+        summary=ai_result.get("summary", ""),
+        analysis=ai_result.get("analysis", ""),
+        remediation=ai_result.get("remediation", "")
+    )
+    db.add(investigation)
     db.commit()
-    return {"status": "success", "risk_score": 0}
+    db.refresh(investigation)
 
+    return investigation
 
-
-@router.get("/{device_id}/timeline", response_model=List[TimelineEvent], dependencies=[Depends(check_device_access)])
-def get_device_timeline(device_id: str, limit: int = 100, db: Session = Depends(get_db)):
-    """
-    Combines alerts, process starts, and network connections into a chronological stream.
-    """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found.")
-
-    events = []
-
-    # 1. Fetch Alerts
-    alerts = db.query(Alert).filter(Alert.device_id == device_id).order_by(Alert.timestamp.desc()).limit(limit).all()
-    for alert in alerts:
-        events.append(TimelineEvent(
-            id=f"alert-{alert.id}",
-            event_type="alert",
-            title=alert.title,
-            description=f"[{alert.mitre_tactic or 'Threat'}] {alert.description}",
-            timestamp=alert.timestamp,
-            severity=alert.severity,
-            details={"tactic": alert.mitre_tactic, "technique": alert.mitre_technique, "pid": alert.trigger_process_pid}
-        ))
-
-    # 2. Fetch Processes
-    processes = db.query(Process).filter(Process.device_id == device_id).order_by(Process.timestamp.desc()).limit(limit).all()
-    for proc in processes:
-        events.append(TimelineEvent(
-            id=f"process-{proc.id}",
-            event_type="process_started",
-            title=f"Process Spawned: {proc.name}",
-            description=f"PID {proc.pid} executed by {proc.username or 'SYSTEM'}. Command: {proc.command_line or 'N/A'}",
-            timestamp=proc.timestamp,
-            severity="info",
-            details={"pid": proc.pid, "ppid": proc.ppid, "exe_path": proc.exe_path, "sha256": proc.sha256_hash}
-        ))
-
-    # 3. Fetch Network Connections
-    connections = db.query(NetworkConnection).filter(NetworkConnection.device_id == device_id).order_by(NetworkConnection.timestamp.desc()).limit(limit).all()
-    for conn in connections:
-        events.append(TimelineEvent(
-            id=f"net-{conn.id}",
-            event_type="network_connection",
-            title=f"Socket Established: {conn.remote_address}:{conn.remote_port}",
-            description=f"Process PID {conn.pid} opened {conn.protocol} connection to {conn.remote_address}:{conn.remote_port} ({conn.state})",
-            timestamp=conn.timestamp,
-            severity="info",
-            details={"pid": conn.pid, "protocol": conn.protocol, "remote_ip": conn.remote_address, "remote_port": conn.remote_port}
-        ))
-
-    # Sort all events chronologically descending (newest first)
-    events.sort(key=lambda x: x.timestamp, reverse=True)
-    return events[:limit]
+@router.get("/device/{device_id}/investigations", response_model=List[InvestigationResponse])
+def get_investigations(device_id: str, db: Session = Depends(get_db)):
+    return db.query(Investigation).filter(Investigation.device_id == device_id).order_by(Investigation.created_at.desc()).all()

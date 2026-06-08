@@ -1,174 +1,123 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Any
+from pydantic import BaseModel, ConfigDict
+from typing import List, Optional
 from datetime import datetime
 
-# --- Process Schemas ---
+# Base Schemas
 class ProcessBase(BaseModel):
     pid: int
     ppid: Optional[int] = None
     name: str
-    exe_path: Optional[str] = None
-    command_line: Optional[str] = None
+    exe: Optional[str] = None
+    cmdline: Optional[str] = None
     username: Optional[str] = None
-    sha256_hash: Optional[str] = None
-    cpu_percent: Optional[float] = 0.0
-    memory_percent: Optional[float] = 0.0
+    sha256: Optional[str] = None
 
 class ProcessCreate(ProcessBase):
     pass
 
-class ProcessOut(ProcessBase):
+class ProcessResponse(ProcessBase):
     id: int
     device_id: str
-    timestamp: datetime
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
-
-
-# --- Network Connection Schemas ---
+# Sockets / Connections
 class NetworkConnectionBase(BaseModel):
     pid: Optional[int] = None
-    protocol: Optional[str] = None
-    local_address: Optional[str] = None
-    local_port: Optional[int] = None
-    remote_address: Optional[str] = None
-    remote_port: Optional[int] = None
-    state: Optional[str] = None
-    reputation_status: Optional[str] = "unverified"
+    process_name: Optional[str] = None
+    family: Optional[str] = None
+    type: Optional[str] = None
+    laddr: Optional[str] = None
+    raddr: Optional[str] = None
+    status: Optional[str] = None
 
 class NetworkConnectionCreate(NetworkConnectionBase):
     pass
 
-class NetworkConnectionOut(NetworkConnectionBase):
+class NetworkConnectionResponse(NetworkConnectionBase):
+    id: int
+    device_id: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# File Activity
+class FileEventBase(BaseModel):
+    action: str
+    filepath: str
+
+class FileEventCreate(FileEventBase):
+    pass
+
+class FileEventResponse(FileEventBase):
     id: int
     device_id: str
     timestamp: datetime
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
-
-
-# --- Telemetry Ingestion Schemas ---
-class TelemetrySubmit(BaseModel):
-    device_id: str
-    hostname: str
-    os_name: str
-    os_version: Optional[str] = None
-    ip_address: Optional[str] = None
-    mac_address: Optional[str] = None
-    cpu_usage: Optional[float] = 0.0
-    ram_usage: Optional[float] = 0.0
-    logged_in_user: Optional[str] = None
-    processes: List[ProcessCreate] = []
-    network_connections: List[NetworkConnectionCreate] = []
-
-
-# --- Device Schemas ---
+# Device Schemas
 class DeviceBase(BaseModel):
-    device_id: str
+    id: str
     hostname: str
     os_name: str
-    os_version: Optional[str] = None
-    ip_address: Optional[str] = None
+    os_version: str
+    ip_address: str
     mac_address: Optional[str] = None
+    logged_in_user: Optional[str] = None
     cpu_usage: Optional[float] = 0.0
-    ram_usage: Optional[float] = 0.0
-    logged_in_user: Optional[str] = None
-    risk_score: Optional[int] = 0
-    status: Optional[str] = "offline"
+    memory_usage: Optional[float] = 0.0
 
-class DeviceOut(DeviceBase):
+class DeviceCreate(DeviceBase):
+    pass
+
+class DeviceResponse(DeviceBase):
+    risk_score: float
     last_seen: datetime
-    dashboard_token: str
-    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
-
-
-# --- Registration & Auth Schemas ---
-class DeviceRegister(BaseModel):
-    hostname: str
-    os_name: str
-    os_version: Optional[str] = None
-    ip_address: Optional[str] = None
-    mac_address: Optional[str] = None
-    logged_in_user: Optional[str] = None
-    registration_key: Optional[str] = None
-
-class DeviceRegisterOut(BaseModel):
-    device_id: str
-    device_token: str
-    dashboard_token: str
-    dashboard_url: str
-
-class AdminLogin(BaseModel):
-    password: str
-
-class AdminToken(BaseModel):
-    access_token: str
-    token_type: str
-
-
-
-# --- Alert Schemas ---
+# Alerts
 class AlertBase(BaseModel):
     title: str
-    description: Optional[str] = None
+    description: str
     severity: str
     mitre_tactic: Optional[str] = None
     mitre_technique: Optional[str] = None
-    confidence_score: Optional[int] = 50
-    trigger_process_pid: Optional[int] = None
-    trigger_details: Optional[Any] = None
-    resolved: Optional[bool] = False
+    status: Optional[str] = "UNRESOLVED"
 
 class AlertCreate(AlertBase):
-    device_id: str
+    pass
 
-class AlertOut(AlertBase):
+class AlertUpdate(BaseModel):
+    status: str
+
+class AlertResponse(AlertBase):
     id: int
     device_id: str
-    timestamp: datetime
-
-    class Config:
-        from_attributes = True
-
-
-# --- Timeline Event Schema ---
-class TimelineEvent(BaseModel):
-    id: str  # unique synthetic id
-    event_type: str  # 'process_started', 'network_connection', 'alert'
-    title: str
-    description: str
-    timestamp: datetime
-    severity: Optional[str] = "info"  # low, medium, high, critical, info
-    details: Optional[dict] = None
-
-
-# --- AI Investigation Schemas ---
-class InvestigationRequest(BaseModel):
-    incident_id: Optional[int] = None  # If investigating a specific alert
-    custom_query: Optional[str] = None # Or general question
-
-class InvestigationResponse(BaseModel):
-    summary: str
-    mitre_explanation: str
-    timeline_explanation: str
-    remediation_steps: str
-    risk_score_explanation: str
-
-
-# --- Report Schemas ---
-class InvestigationReportOut(BaseModel):
-    id: int
-    device_id: str
-    summary: str
-    timeline_explanation: str
-    remediation_steps: str
-    risk_breakdown: str
     created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+# Investigations
+class InvestigationBase(BaseModel):
+    summary: Optional[str] = None
+    analysis: Optional[str] = None
+    remediation: Optional[str] = None
+
+class InvestigationResponse(InvestigationBase):
+    id: int
+    device_id: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# Comprehensive Telemetry Payload
+class TelemetryIngest(BaseModel):
+    device_id: str
+    hostname: str
+    os_name: str
+    os_version: str
+    ip_address: str
+    mac_address: Optional[str] = None
+    logged_in_user: Optional[str] = None
+    cpu_usage: float = 0.0
+    memory_usage: float = 0.0
+    processes: List[ProcessCreate] = []
+    connections: List[NetworkConnectionCreate] = []
+    file_events: List[FileEventCreate] = []

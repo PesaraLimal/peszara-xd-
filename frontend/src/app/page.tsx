@@ -1,358 +1,285 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { Monitor, Cpu, HardDrive, ShieldAlert, ArrowRight, RefreshCw, Terminal, Activity, Share2 } from 'lucide-react'
+import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import { Monitor, Cpu, Server, Terminal, ShieldAlert, CheckCircle, RefreshCw, PlusCircle } from "lucide-react";
 
 interface Device {
-  device_id: string
-  hostname: string
-  os_name: string
-  os_version?: string
-  ip_address?: string
-  mac_address?: string
-  cpu_usage?: number
-  ram_usage?: number
-  logged_in_user?: string
-  risk_score: number
-  status: string
-  last_seen: string
-  dashboard_token?: string
+  id: string;
+  hostname: string;
+  os_name: string;
+  os_version: string;
+  ip_address: string;
+  mac_address?: string;
+  logged_in_user?: string;
+  cpu_usage: number;
+  memory_usage: number;
+  risk_score: number;
+  last_seen: string;
 }
 
-const getApiUrl = () => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('peszara_api_url')
-    if (saved) return saved
-  }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-}
-
-export default function Dashboard() {
-  const router = useRouter()
-  const [devices, setDevices] = useState<Device[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [apiUrl, setApiUrl] = useState('http://127.0.0.1:8000')
-
-  useEffect(() => {
-    setApiUrl(getApiUrl())
-  }, [])
+export default function Home() {
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchDevices = async () => {
     try {
-      setLoading(true)
-      const currentApiUrl = getApiUrl()
-      const res = await fetch(`${currentApiUrl}/api/v1/devices`, {
-        headers: {
-          'Bypass-Tunnel-Reminder': 'true'
-        }
-      })
-
-      if (!res.ok) throw new Error('Failed to fetch devices')
-      const data = await res.json()
-      setDevices(data)
-      setError(null)
+      const res = await fetch("http://localhost:8000/api/devices");
+      if (!res.ok) throw new Error("Could not connect to the XDR backend server.");
+      const data = await res.json();
+      setDevices(data);
+      setError(null);
     } catch (err: any) {
-      setError(err.message || 'Error connecting to backend')
+      setError(err.message || "Failed to fetch device registry.");
     } finally {
-      setLoading(false)
+      setLoading(false);
+      setRefreshing(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchDevices()
-    const timer = setInterval(fetchDevices, 10000) // refresh every 10s
-    return () => clearInterval(timer)
-  }, [])
+    fetchDevices();
+    const interval = setInterval(fetchDevices, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
-  // Dynamic statistics
-  const totalDevices = devices.length
-  const criticalDevices = devices.filter(d => d.risk_score >= 70).length
-  const parseDateSafe = (dateStr: string) => {
-    if (!dateStr) return new Date(0)
-    if (!dateStr.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(dateStr)) {
-      return new Date(dateStr + 'Z')
-    }
-    return new Date(dateStr)
-  }
-
-  const onlineDevices = devices.filter(d => {
-    const lastSeen = parseDateSafe(d.last_seen).getTime()
-    const now = new Date().getTime()
-    return (now - lastSeen) < 45000 // online if seen in past 45s
-  }).length
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchDevices();
+  };
 
   return (
-    <div className="flex-1 p-8 max-w-7xl mx-auto w-full">
-      {/* Title section */}
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white mb-2">
-            Threat & Endpoint Overview
-          </h1>
-          <p className="text-cyber-muted text-sm">
-            Real-time status of enrolled devices and active threat signatures.
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          <button 
-            onClick={() => {
-              const currentVal = localStorage.getItem('peszara_api_url') || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
-              const newUrl = prompt('Enter your XDR Backend API URL:', currentVal)
-              if (newUrl !== null) {
-                const trimmed = newUrl.trim()
-                if (trimmed) {
-                  localStorage.setItem('peszara_api_url', trimmed)
-                } else {
-                  localStorage.removeItem('peszara_api_url')
-                }
-                window.location.reload()
-              }
-            }}
-            className="flex items-center space-x-2 bg-cyber-card border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent transition px-4 py-2 rounded-md font-mono text-sm"
-          >
-            <span>CONFIG API</span>
-          </button>
-          <button 
-            onClick={fetchDevices}
-            className="flex items-center space-x-2 bg-cyber-card border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent transition px-4 py-2 rounded-md font-mono text-sm"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            <span>REFRESH</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Global Metrics Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-[#121824] border border-[#1E293B] rounded-lg p-5 flex items-center justify-between">
-          <div>
-            <span className="text-xs text-cyber-muted uppercase tracking-wider block font-bold">Total Enrolled Hosts</span>
-            <span className="text-3xl font-bold font-mono text-white mt-1 block">{totalDevices}</span>
+    <main className="min-h-screen bg-[#080a0f] text-[#f3f4f6] font-mono selection:bg-emerald-500 selection:text-black">
+      {/* Header */}
+      <header className="border-b border-[#1d2433] bg-[#0c0f16]/80 backdrop-blur sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+            <div className="h-3 w-3 bg-emerald-500 rounded-full animate-ping"></div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white glow-green">
+                PESZARA XDR
+              </h1>
+              <p className="text-xs text-[#9ca3af]">
+                AI-Powered Endpoint Security & Telemetry Platform
+              </p>
+            </div>
           </div>
-          <div className="w-10 h-10 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-400">
-            <Monitor size={20} />
-          </div>
-        </div>
-
-        <div className="bg-[#121824] border border-[#1E293B] rounded-lg p-5 flex items-center justify-between">
-          <div>
-            <span className="text-xs text-cyber-muted uppercase tracking-wider block font-bold">Online Agents</span>
-            <span className="text-3xl font-bold font-mono text-cyber-green mt-1 block">{onlineDevices}</span>
-          </div>
-          <div className="w-10 h-10 rounded-full bg-emerald-950/40 border border-emerald-900 flex items-center justify-center text-cyber-green">
-            <Activity size={20} />
-          </div>
-        </div>
-
-        <div className="bg-[#121824] border border-[#1E293B] rounded-lg p-5 flex items-center justify-between">
-          <div>
-            <span className="text-xs text-cyber-muted uppercase tracking-wider block font-bold">Active Threats / Criticals</span>
-            <span className="text-3xl font-bold font-mono text-cyber-red mt-1 block">{criticalDevices}</span>
-          </div>
-          <div className="w-10 h-10 rounded-full bg-rose-950/40 border border-rose-900 flex items-center justify-center text-cyber-red">
-            <ShieldAlert size={20} />
-          </div>
-        </div>
-
-        <div className="bg-[#121824] border border-[#1E293B] rounded-lg p-5 flex items-center justify-between">
-          <div>
-            <span className="text-xs text-cyber-muted uppercase tracking-wider block font-bold">Average Host Risk</span>
-            <span className="text-3xl font-bold font-mono text-cyber-yellow mt-1 block">
-              {devices.length ? Math.round(devices.reduce((acc, curr) => acc + curr.risk_score, 0) / devices.length) : 0}%
+          <div className="flex items-center space-x-4">
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800">
+              <span className="w-1.5 h-1.5 mr-1.5 bg-emerald-400 rounded-full pulse-glow"></span>
+              SYSTEM ONLINE
             </span>
-          </div>
-          <div className="w-10 h-10 rounded-full bg-amber-950/40 border border-amber-900 flex items-center justify-center text-cyber-yellow">
-            <ShieldAlert size={20} />
+            <button
+              onClick={handleRefresh}
+              className={`p-1.5 rounded bg-[#0f131a] hover:bg-[#1d2433] border border-[#1d2433] transition-all text-[#9ca3af] hover:text-white ${
+                refreshing ? "animate-spin text-emerald-400" : ""
+              }`}
+              title="Refresh Registry"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Device grid section */}
-      {error && (
-        <div className="bg-rose-950/30 border border-rose-800 text-rose-300 p-5 rounded-lg mb-8 font-mono text-sm">
-          <div className="font-bold text-cyber-red mb-1">CRITICAL ERROR:</div>
-          <div>
-            Failed to communicate with XDR Backend at <code className="bg-black/40 px-1.5 py-0.5 rounded text-white text-xs">{apiUrl}</code>.
-            Make sure your backend is running.
-          </div>
-          <div className="mt-4 border-t border-rose-900/30 pt-4">
-            <span className="block mb-2 text-cyber-muted text-xs font-sans">
-              If your backend is deployed at a custom URL (e.g. Render/Railway) or tunneled via HTTPS, configure it below:
+      <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+        {/* Banner */}
+        <section className="mb-10 p-6 rounded-lg border border-[#1d2433] bg-[#0f131a] relative overflow-hidden">
+          <div className="absolute top-0 right-0 h-64 w-64 bg-emerald-500/5 blur-[80px] rounded-full pointer-events-none"></div>
+          <div className="max-w-3xl">
+            <span className="text-emerald-400 text-xs font-semibold uppercase tracking-wider block mb-2">
+              Cybersecurity Portfolio MVP
             </span>
-            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
-              <input 
-                type="text" 
-                placeholder="https://your-backend.onrender.com" 
-                defaultValue={apiUrl}
-                id="custom-backend-url-input"
-                className="flex-1 bg-slate-950 border border-rose-900/50 focus:border-cyber-accent text-white px-3 py-2 text-xs rounded outline-none font-sans"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const input = e.currentTarget.value.trim()
-                    if (input) {
-                      localStorage.setItem('peszara_api_url', input)
-                      window.location.reload()
-                    }
-                  }
-                }}
-              />
-              <div className="flex space-x-2 shrink-0">
-                <button 
-                  onClick={() => {
-                    const input = (document.getElementById('custom-backend-url-input') as HTMLInputElement)?.value.trim()
-                    if (input) {
-                      localStorage.setItem('peszara_api_url', input)
-                      window.location.reload()
-                    }
-                  }}
-                  className="bg-rose-900/55 hover:bg-rose-900/80 border border-rose-700 text-white px-4 py-2 rounded text-xs transition font-semibold font-sans"
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Host Security Auditing & Investigation Hub
+            </h2>
+            <p className="text-sm text-[#9ca3af] leading-relaxed mb-4">
+              Deploy the Python Telemetry Agent to any endpoint to capture raw system activity, map behaviors to MITRE ATT&CK categories, perform automated reputation checks via AbuseIPDB and VirusTotal, and query AI incident analysis pipelines.
+            </p>
+          </div>
+        </section>
+
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Device List Section */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-md font-semibold text-[#9ca3af] uppercase tracking-wider flex items-center space-x-2">
+                <Monitor className="h-4 w-4 text-emerald-400" />
+                <span>Registered Devices ({devices.length})</span>
+              </h3>
+            </div>
+
+            {loading ? (
+              <div className="p-8 border border-[#1d2433] rounded-lg bg-[#0f131a] flex flex-col items-center justify-center space-y-3">
+                <RefreshCw className="h-8 w-8 text-emerald-400 animate-spin" />
+                <span className="text-xs text-[#9ca3af]">Loading device registry...</span>
+              </div>
+            ) : error ? (
+              <div className="p-6 border border-red-900/50 rounded-lg bg-red-950/20 text-red-400 flex flex-col space-y-3">
+                <ShieldAlert className="h-8 w-8 text-red-500" />
+                <div>
+                  <h4 className="font-bold text-sm">Server Offline</h4>
+                  <p className="text-xs text-red-300 mt-1">{error}</p>
+                </div>
+                <button
+                  onClick={handleRefresh}
+                  className="px-3 py-1.5 bg-[#0f131a] border border-[#1d2433] hover:border-red-500 text-xs rounded transition-colors w-fit text-[#f3f4f6]"
                 >
-                  Save URL
+                  Retry Connection
                 </button>
-                {typeof window !== 'undefined' && localStorage.getItem('peszara_api_url') && (
-                  <button 
-                    onClick={() => {
-                      localStorage.removeItem('peszara_api_url')
-                      window.location.reload()
-                    }}
-                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyber-muted hover:text-white px-4 py-2 rounded text-xs transition font-semibold font-sans"
-                  >
-                    Reset
-                  </button>
-                )}
+              </div>
+            ) : devices.length === 0 ? (
+              <div className="p-10 border border-dashed border-[#1d2433] rounded-lg bg-[#0f131a]/50 text-center flex flex-col items-center justify-center space-y-4">
+                <PlusCircle className="h-10 w-10 text-[#9ca3af] animate-pulse" />
+                <div>
+                  <h4 className="text-sm font-bold text-white">No Endpoints Connected</h4>
+                  <p className="text-xs text-[#9ca3af] max-w-sm mx-auto mt-1">
+                    Telemetry data stream is currently empty. Run the Python agent on a machine to register it below.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {devices.map((device) => {
+                  const getRiskColor = (score: number) => {
+                    if (score >= 70) return "text-red-500 border-red-500/30 bg-red-500/10";
+                    if (score >= 40) return "text-yellow-500 border-yellow-500/30 bg-yellow-500/10";
+                    return "text-emerald-500 border-emerald-500/30 bg-emerald-500/10";
+                  };
+
+                  const getRiskBarColor = (score: number) => {
+                    if (score >= 70) return "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]";
+                    if (score >= 40) return "bg-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.5)]";
+                    return "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]";
+                  };
+
+                  return (
+                    <div
+                      key={device.id}
+                      className="p-5 border border-[#1d2433] hover:border-emerald-500/40 rounded-lg bg-[#0f131a] transition-all flex flex-col justify-between"
+                    >
+                      <div className="mb-4">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-bold text-white text-md flex items-center space-x-1.5">
+                              <Server className="h-4 w-4 text-[#9ca3af]" />
+                              <span>{device.hostname}</span>
+                            </h4>
+                            <p className="text-[10px] text-[#9ca3af] mt-0.5">
+                              ID: {device.id}
+                            </p>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${getRiskColor(
+                              device.risk_score
+                            )}`}
+                          >
+                            Risk: {device.risk_score}%
+                          </span>
+                        </div>
+
+                        {/* OS Spec */}
+                        <div className="grid grid-cols-2 gap-2 mt-4 text-[11px] text-[#9ca3af]">
+                          <div>
+                            <span className="text-[10px] text-gray-600 block">OS</span>
+                            <span className="text-white font-semibold">{device.os_name}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-gray-600 block">IP</span>
+                            <span className="text-white font-semibold">{device.ip_address}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-gray-600 block">User</span>
+                            <span className="text-white font-semibold truncate block">
+                              {device.logged_in_user || "N/A"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-gray-600 block">Last Seen</span>
+                            <span className="text-white">
+                              {new Date(device.last_seen).toLocaleTimeString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Risk Score Meter */}
+                      <div className="mb-4">
+                        <div className="flex justify-between text-[10px] text-[#9ca3af] mb-1">
+                          <span>Endpoint Risk Rating</span>
+                          <span className="font-bold">{device.risk_score} / 100</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-950 rounded overflow-hidden">
+                          <div
+                            className={`h-full ${getRiskBarColor(device.risk_score)}`}
+                            style={{ width: `${device.risk_score}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      <Link
+                        href={`/device/${device.id}`}
+                        className="w-full py-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-800 text-emerald-400 hover:text-emerald-300 text-xs font-bold text-center rounded transition-all flex items-center justify-center space-x-1"
+                      >
+                        <Terminal className="h-3.5 w-3.5" />
+                        <span>Inspect Telemetry</span>
+                      </Link>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Setup Guide Section */}
+          <div className="space-y-6">
+            <div className="p-6 border border-[#1d2433] rounded-lg bg-[#0f131a] relative">
+              <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4 flex items-center space-x-2">
+                <Terminal className="h-4.5 w-4.5 text-emerald-400" />
+                <span>Agent Deployment</span>
+              </h3>
+
+              <div className="space-y-4 text-xs text-[#9ca3af]">
+                <p>
+                  To register an endpoint host to the Peszara XDR engine, install the telemetry dependencies and initiate the loop on the host machine.
+                </p>
+
+                <div className="space-y-2">
+                  <span className="text-white font-bold block">1. Clone & Setup Folder</span>
+                  <p className="text-[11px]">Navigate into the agent directory on your host:</p>
+                  <pre className="p-2 bg-gray-950 border border-[#1d2433] rounded text-emerald-400 overflow-x-auto text-[10px]">
+                    cd ./agent
+                  </pre>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-white font-bold block">2. Install Required Libs</span>
+                  <pre className="p-2 bg-gray-950 border border-[#1d2433] rounded text-emerald-400 overflow-x-auto text-[10px]">
+                    pip install -r requirements.txt
+                  </pre>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-white font-bold block">3. Launch Python Loop</span>
+                  <pre className="p-2 bg-gray-950 border border-[#1d2433] rounded text-emerald-400 overflow-x-auto text-[10px]">
+                    python agent.py
+                  </pre>
+                </div>
+
+                <div className="p-3 bg-emerald-950/20 border border-emerald-900/50 rounded-lg text-emerald-400 flex items-start space-x-2 text-[11px]">
+                  <CheckCircle className="h-4 w-4 mr-1 flex-shrink-0 mt-0.5" />
+                  <span>
+                    Once launched, the telemetry client registers a MAC-address-tied hash and pushes process updates every 10 seconds.
+                  </span>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      )}
-
-      {loading && devices.length === 0 ? (
-        <div className="h-64 flex flex-col items-center justify-center space-y-4">
-          <RefreshCw className="animate-spin text-cyber-accent" size={32} />
-          <p className="font-mono text-cyber-muted text-sm">Scanning active telemetry networks...</p>
-        </div>
-      ) : devices.length === 0 ? (
-        <div className="bg-cyber-card border border-cyber-border rounded-lg p-8 text-center max-w-xl mx-auto mt-8">
-          <Terminal size={48} className="mx-auto text-cyber-accent mb-4" />
-          <h2 className="text-xl font-bold text-white mb-2">No Registered Telemetry Agents</h2>
-          <p className="text-cyber-muted text-sm mb-6">
-            Peszara XDR is waiting for system telemetry. Follow the instructions to install and register the python agent on an endpoint.
-          </p>
-          <div className="bg-slate-950 p-4 rounded border border-cyber-border text-left font-mono text-xs text-cyber-green overflow-x-auto space-y-2">
-            <div># Setup and start the telemetry agent:</div>
-            <div>cd agent</div>
-            <div>pip install -r requirements.txt</div>
-            <div>python agent.py</div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {devices.map((device) => {
-            const isOnline = (new Date().getTime() - parseDateSafe(device.last_seen).getTime()) < 45000
-            const riskColor = 
-              device.risk_score >= 70 ? 'text-cyber-red border-rose-900/50 bg-rose-950/10' :
-              device.risk_score >= 30 ? 'text-cyber-yellow border-amber-900/50 bg-amber-950/10' :
-              'text-cyber-green border-emerald-900/50 bg-emerald-950/10'
-
-            return (
-              <div 
-                key={device.device_id}
-                className="bg-cyber-card border border-cyber-border hover:border-cyber-accent transition-all duration-300 rounded-lg p-6 flex flex-col justify-between"
-              >
-                <div>
-                  {/* Status header */}
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h2 className="text-xl font-bold text-white">{device.hostname}</h2>
-                      <span className="font-mono text-xs text-cyber-muted">{device.device_id}</span>
-                    </div>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase font-mono ${
-                      isOnline ? 'bg-emerald-950 border border-emerald-800 text-cyber-green' : 'bg-slate-900 border border-slate-700 text-cyber-muted'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${isOnline ? 'bg-cyber-green animate-pulse' : 'bg-slate-500'}`}></span>
-                      {isOnline ? 'ONLINE' : 'OFFLINE'}
-                    </span>
-                  </div>
-
-                  {/* System metadata */}
-                  <div className="space-y-2.5 my-5 border-t border-b border-slate-800 py-3 font-mono text-xs text-cyber-muted">
-                    <div className="flex justify-between">
-                      <span>OS:</span>
-                      <span className="text-cyber-text">{device.os_name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>IP:</span>
-                      <span className="text-cyber-text">{device.ip_address || 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Active User:</span>
-                      <span className="text-cyber-text truncate max-w-[150px]">{device.logged_in_user || 'N/A'}</span>
-                    </div>
-                  </div>
-
-                  {/* Live Stats Indicators */}
-                  <div className="grid grid-cols-2 gap-4 mb-6 text-xs font-mono">
-                    <div className="bg-slate-950/60 p-2.5 rounded border border-slate-800/80">
-                      <div className="flex items-center space-x-1.5 text-cyber-muted mb-1">
-                        <Cpu size={12} />
-                        <span>CPU Usage</span>
-                      </div>
-                      <span className="text-white font-bold">{device.cpu_usage ?? 0}%</span>
-                    </div>
-                    <div className="bg-slate-950/60 p-2.5 rounded border border-slate-800/80">
-                      <div className="flex items-center space-x-1.5 text-cyber-muted mb-1">
-                        <HardDrive size={12} />
-                        <span>RAM Usage</span>
-                      </div>
-                      <span className="text-white font-bold">{device.ram_usage ?? 0}%</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Risk score gauge and redirect button */}
-                <div>
-                  <div className={`border rounded-lg p-3.5 flex items-center justify-between mb-4 ${riskColor}`}>
-                    <div>
-                      <span className="text-xs uppercase tracking-wider block font-bold text-cyber-muted">Risk Severity</span>
-                      <span className="text-2xl font-bold font-mono">
-                        {device.risk_score} <span className="text-xs text-cyber-muted font-normal">/ 100</span>
-                      </span>
-                    </div>
-                    <ShieldAlert size={28} />
-                  </div>
-
-                  <div className="flex space-x-2">
-                    <Link 
-                      href={`/device/${device.device_id}`}
-                      className="flex-1 bg-[#1A2536] border border-cyber-border hover:border-cyber-accent text-cyber-text hover:text-cyber-accent flex items-center justify-center space-x-2 py-2.5 rounded-lg text-sm font-semibold transition"
-                    >
-                      <span>INVESTIGATE HOST</span>
-                      <ArrowRight size={14} />
-                    </Link>
-                    {device.dashboard_token && (
-                      <button 
-                        onClick={() => {
-                          const baseUrl = window.location.origin
-                          const shareUrl = `${baseUrl}/device/${device.device_id}?token=${device.dashboard_token}`
-                          navigator.clipboard.writeText(shareUrl)
-                          alert('Shareable Dashboard Link copied to clipboard!')
-                        }}
-                        className="bg-[#121824] border border-cyber-border hover:border-cyber-accent text-cyber-muted hover:text-cyber-accent p-2.5 rounded-lg transition"
-                        title="Copy Shareable Dashboard Link"
-                      >
-                        <Share2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
+      </div>
+    </main>
+  );
 }

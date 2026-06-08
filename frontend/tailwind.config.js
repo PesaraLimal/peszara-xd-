@@ -9,28 +9,22 @@ module.exports = {
     extend: {
       colors: {
         cyber: {
-          bg: "#0B0F17",         // Deep space dark
-          card: "#121824",       // Core component backing
-          border: "#1E293B",     // Subtle layout division
-          text: "#E2E8F0",       // High contrast text
-          muted: "#94A3B8",      // Low contrast details
-          accent: "#06B6D4",     // Neon cyan glow
-          green: "#10B981",      // Clear/Online state
-          yellow: "#F59E0B",     // Medium warning
-          red: "#EF4444",        // Critical alert
-          purple: "#8B5CF6",     // MITRE tag
+          bg: "#080a0f",
+          card: "#0f131a",
+          border: "#1d2433",
+          green: "#10b981",       // Neon green
+          greenGlow: "#059669",
+          yellow: "#eab308",      // Warnings
+          red: "#ef4444",         // Alerts/Critical
+          blue: "#3b82f6",        // Informational
+          textPrimary: "#f3f4f6", // Bright text
+          textSecondary: "#9ca3af" // Muted text
         }
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
-        sans: ['Inter', 'Outfit', 'sans-serif'],
-      },
-      boxShadow: {
-        'glow-cyan': '0 0 15px rgba(6, 182, 212, 0.15)',
-        'glow-red': '0 0 15px rgba(239, 68, 68, 0.25)',
-        'glow-green': '0 0 15px rgba(16, 185, 129, 0.2)',
+        mono: ["Courier New", "Courier", "monospace"],
       }
     },
   },
   plugins: [],
-}
+};

@@ -1,51 +1,35 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  db:
-    image: postgres:15-alpine
-    container_name: peszara_db
-    environment:
-      POSTGRES_DB: peszara_xdr
-      POSTGRES_USER: peszara_admin
-      POSTGRES_PASSWORD: securepassword123
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U peszara_admin -d peszara_xdr"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: peszara_backend
+    container_name: peszara-xdr-backend
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://peszara_admin:securepassword123@db:5432/peszara_xdr
+      - PORT=8000
+      - DATABASE_URL=sqlite:///./peszara_xdr.db
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
-    depends_on:
-      db:
-        condition: service_healthy
+    volumes:
+      - backend_db:/app
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: peszara_frontend
+    container_name: peszara-xdr-frontend
     ports:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
+  backend_db:

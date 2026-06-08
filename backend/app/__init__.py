@@ -1,1 +1,1 @@
-# Backend application root
+# PESZARA XDR Application Package

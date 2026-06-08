@@ -2,14 +2,15 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
+# Copy dependency configs
+COPY package.json ./
 RUN npm install
 
+# Copy frontend source files
 COPY . .
 
-# Run next build to compile the TypeScript and React code
-RUN npm run build
-
+# Expose Next.js port
 EXPOSE 3000
 
-CMD ["npm", "run", "start"]
+# Run development server to bypass build-time static fetch issues
+CMD ["npm", "run", "dev"]
